@@ -29,6 +29,9 @@ class GymBot:
         self.selected_location_index = None
         self.selected_location = None
         self.selected_date = None
+        self.selected_date_index = None
+        self.day_div_id = None
+        self.selected_class_index = None
 
     def open_website(self):
         """Open the gym website."""
@@ -82,19 +85,18 @@ class GymBot:
             select = Select(dropdown)
             options = select.options
 
-            print("adsjlfkhadkjfh:", location_index)
             if location_index is None:
                 print("Available locations:")
                 for index, option in enumerate(options, start=1):
-                    if index == 1:
+                    if (index == 1):
                         continue
                     temp = index
                     print(f"{temp}. {option.text}")
                 selected_index = self.get_valid_input("Enter the number corresponding to your chosen location: ", options) 
-                # selected_index += 1
-                print("selected inde#############################", selected_index)
                 self.selected_location_index = selected_index
                 location_index = selected_index
+            else:
+                selected_index = location_index
                 
             select.select_by_index(location_index)
             self.selected_location = options[location_index].text
@@ -116,7 +118,7 @@ class GymBot:
     }
 
 
-    def choose_date(self) -> str:
+    def choose_date(self, selected_date_index=None):
         """
         Choose a date interactively from the displayed options on the gym website.
 
@@ -127,28 +129,47 @@ class GymBot:
             date_elements = WebDriverWait(self.driver, 10).until(
                 EC.presence_of_all_elements_located((By.CLASS_NAME, 'day-column'))
             )
+            if selected_date_index is None:
+                print("Available dates:")
+                formatted_dates = []
+                for index, date_element in enumerate(date_elements, start=1):
+                    day = date_element.get_attribute('data-day')
+                    month = date_element.get_attribute('data-month')
+                    date = date_element.find_element(By.CLASS_NAME, 'month-day').get_attribute('innerHTML')
 
-            print("Available dates:")
-            formatted_dates = []
-            for index, date_element in enumerate(date_elements, start=1):
-                day = date_element.get_attribute('data-day')
-                month = date_element.get_attribute('data-month')
-                date = date_element.find_element(By.CLASS_NAME, 'month-day').get_attribute('innerHTML')
+                    formatted_date = datetime.strptime(f"{day} {month} {date}", "%A %B %d").strftime("%A, %B %d")
+                    formatted_dates.append(formatted_date)
+                    print(f"{index}. {formatted_date}")
 
-                formatted_date = datetime.strptime(f"{day} {month} {date}", "%A %B %d").strftime("%A, %B %d")
-                formatted_dates.append(formatted_date)
-                print(f"{index}. {formatted_date}")
+                selected_index = int(input("Enter the number corresponding to your chosen date: ")) - 1
+                self.selected_date_index = selected_index
+            else:
+                selected_index = selected_date_index
+            try:
+                WebDriverWait(self.driver, 10).until(
+                    EC.invisibility_of_element_located((By.ID, "overlay-overhaul"))
+                )
+            except TimeoutException:
+                print("Overlay did not disappear within the timeout period.")
+            
+            while True:
 
-            selected_index = int(input("Enter the number corresponding to your chosen date: ")) - 1
+                date_elements[selected_index].click()
+                selected_date_text = date_elements[selected_index].text.strip()
+                if selected_date_index is None:
+                    print(f"Selected date: {formatted_dates[selected_index]}")
 
-            date_elements[selected_index].click()
+                    self.selected_date = formatted_dates[selected_index]
 
-            selected_date_text = date_elements[selected_index].text.strip()
-
-            print(f"Selected date: {formatted_dates[selected_index]}")
-
-            day_div_id = self.DAY_DIV_MAPPING.get(selected_date_text[:3])
-            return day_div_id
+                    day_div_id = self.DAY_DIV_MAPPING.get(selected_date_text[:3])
+                    self.day_div_id = day_div_id
+                try:
+                    WebDriverWait(self.driver, 10).until(
+                        EC.presence_of_element_located((By.XPATH, f'//div[@id="{self.day_div_id}"]//div[contains(@class, "GXPEntry")]'))
+                    )
+                    break
+                except TimeoutException:
+                    print("Target element not found yet. Continuing to click.")
 
         except Exception as e:
             print("Unable to choose the date.")
@@ -156,17 +177,50 @@ class GymBot:
 
 
     
+    def get_reservation_start_time(self, signup_button):
+        """Get the reservation start time from the signup button."""
+        reservation_start_time = signup_button.get_attribute('title').split(': ')[-1]
+
+        # Remove leading newline character and adjust the datetime format
+        reservation_start_time = reservation_start_time.lstrip("\n")
+        reservation_time = datetime.strptime(reservation_start_time, "%m/%d/%Y at %I:%M%p")
+
+        return reservation_time
     
-    def choose_class(self, day_div_id: str):
+    def refresh_in_time(self, reservation_start_time):
+
+        # Remove leading newline character and adjust the datetime format
+        current_time = datetime.now().replace(second=0, microsecond=0)
+        print("Current Time", current_time)
+        print("Reservation Start Time", reservation_start_time)
+
+        if current_time < reservation_start_time:
+            time_difference = reservation_start_time - current_time
+            seconds_remaining = int(time_difference.total_seconds())
+
+            self.display_seconds_remaining(seconds_remaining)
+
+        return
+    
+    def perform_actions(self, selected_index):
+        self.driver.refresh()
+        self.choose_location(self.selected_location_index)
+        time.sleep(2)
+        self.choose_date(self.selected_date_index)
+        time.sleep(2)
+        self.choose_class(selected_index)
+
+    def choose_class(self, selected_class_index=None):
         try:
             # Wait for the class elements to be present
             class_elements = WebDriverWait(self.driver, 20).until(
                 EC.presence_of_all_elements_located(
-                    (By.XPATH, f'//div[@id="{day_div_id}"]//div[contains(@class, "GXPEntry")]')
+                    (By.XPATH, f'//div[@id="{self.day_div_id}"]//div[contains(@class, "GXPEntry")]')
                 )
             )
-
-            print("Available classes:")
+            print("this is the selected class index", selected_class_index)
+            if selected_class_index is None:
+                print("Available classes:")
 
             for index, class_element in enumerate(class_elements, start=1):
                 try:
@@ -197,48 +251,49 @@ class GymBot:
                         class_capacity_info = class_element.find_element(By.XPATH, './/div[contains(@class, "GXPDescription")]/span').get_attribute('innerHTML')
                     except:
                         class_capacity_info = 'No capacity info available'
-    
-                    print(f"{index}. {class_time} - {title_element} with {instructor_element} at {studio_location_element} - {class_capacity_info}")
+                    
+                    try:
+                        reservation_start_time = self.get_reservation_start_time(class_element.find_element(By.XPATH, './/button[contains(@class, "signup-btn")]'))
+                    except:
+                        reservation_start_time = ''
+                    if selected_class_index is None:
+                        print(f"{index}. {class_time} - {title_element} with {instructor_element} at {studio_location_element} - {class_capacity_info} - {reservation_start_time}\n")
 
                 except StaleElementReferenceException:
                     pass
 
                 except Exception as e:
                     print(f"Error retrieving details for class index {index}: {e}")
-
-            selected_index = self.get_valid_input("Enter the number corresponding to your chosen class: ", class_elements)
+            if selected_class_index is  None:
+                selected_index = self.get_valid_input("Enter the number corresponding to your chosen class: ", class_elements)
+            else:
+                selected_index = selected_class_index
 
             class_element = class_elements[selected_index]
 
             try:
-                signup_button = class_element.find_element(By.XPATH, './/button[contains(@class, "signup-btn")]')
-                # self.refresh_in_time(signup_button)
-                print("Refreshing the page.")
-                self.driver.refresh()
-                location_index = self.selected_location_index
-                print("location index", location_index)
-                self.choose_location(location_index=location_index)
-                new_class_elements = class_elements = WebDriverWait(self.driver, 20).until(
-                EC.presence_of_all_elements_located(
-                    (By.XPATH, f'//div[@id="{day_div_id}"]//div[contains(@class, "GXPEntry")]')
-                    )
-                )
-                print("new class elements", new_class_elements)
-                # new_class_element = new_class_elements[selected_index]
-                # new_singup_button = new_class_element.find_element(By.XPATH, './/button[contains(@class, "signup-btn")]')
-                # print("new signup button", new_singup_button)
-                # signup_button = new_class_element.find_element(By.XPATH, './/a[contains(@class, "btn signup-btn btn-color-setting signup-btn-color signUpGXP")]')
-                # signup_button_url = signup_button.get_attribute('href')
-                # print("Sign-up URL:", signup_button_url)
-                # self.automatic_signup(signup_button_url)
+                reservation_start_time = self.get_reservation_start_time(class_element.find_element(By.XPATH, './/button[contains(@class, "signup-btn")]'))
+            except:
+                reservation_start_time = datetime.now() - timedelta(days=1)
 
-            except NoSuchElementException:
+            if reservation_start_time > datetime.now():
+                self.refresh_in_time(reservation_start_time)
+                self.perform_actions(selected_index)
+
+
+
+                # self.choose_date()
+            try:
+                print('checking for signup button')
+                print(class_element)
                 signup_button = class_element.find_element(By.XPATH, './/a[contains(@class, "btn signup-btn btn-color-setting signup-btn-color signUpGXP")]')
                 signup_button_url = signup_button.get_attribute('href')
                 print("Sign-up URL:", signup_button_url)
                 self.automatic_signup(signup_button_url)
-                # self.handle_signup_button(signup_button_url)
-                return
+            except:
+                print("No sign-up button found.")
+            # self.handle_signup_button(signup_button_url)
+            return
 
             if not signup_button.is_enabled():
                 # self.handle_signup_button(signup_button)
@@ -264,30 +319,6 @@ class GymBot:
             except ValueError:
                 print("Invalid input. Please enter a valid input.")
 
-    def refresh_in_time(self, signup_button):
-        # Get reservation start time
-        reservation_start_time = signup_button.get_attribute('title').split(': ')[-1]
-
-        # Remove leading newline character and adjust the datetime format
-        reservation_start_time = reservation_start_time.lstrip("\n")
-        reservation_time = datetime.strptime(reservation_start_time, "%m/%d/%Y at %I:%M%p")
-
-        # Calculate the time remaining in seconds
-        current_time = datetime.now().replace(second=0, microsecond=0)
-        print("Current Time", current_time)
-        print("Reservation Start Time", reservation_time)
-
-
-        if current_time < reservation_time:
-            time_difference = reservation_time - current_time
-            seconds_remaining = int(time_difference.total_seconds())
-
-            self.display_seconds_remaining(seconds_remaining)
-
-            WebDriverWait(self.driver, 10).until(EC.presence_of_element_located((By.XPATH, './/a[contains(@class, "btn signup-btn btn-color-setting signup-btn-color signUpGXP")]')))
-
-        self.driver.refresh()
-        print("Refreshing the page.")
 
         
     def display_seconds_remaining(self, seconds_remaining):
@@ -308,6 +339,7 @@ class GymBot:
             print(f"Time remaining: {time_remaining}", end="\r")
             time.sleep(1)  # Wait for 1 second
             seconds_remaining -= 1
+        time.sleep(2) 
 
 
     def automatic_signup(self, signup_url: str):
@@ -349,9 +381,9 @@ class GymBot:
             if choice == '1':
                 self.choose_location_menu()
             elif choice == '2':
-                day_div_id = self.choose_date_menu()
+                self.choose_date_menu()
             elif choice == '3':
-                self.choose_class_menu(day_div_id)
+                self.choose_class_menu()
             elif choice == '4':
                 print("Quitting...")
                 sys.exit(0)
@@ -377,16 +409,16 @@ class GymBot:
         """Menu for choosing the date."""
         if self.driver.current_url != self.main_page_url:
             self.navigate_manually(self.main_page_url, wait_element_locator=(By.ID, 'locationsGXP'))
-        return self.choose_date()
+        self.choose_date()
 
-    def choose_class_menu(self, day_div_id):
+    def choose_class_menu(self):
         """Menu for choosing the gym class."""
         if self.driver.current_url != self.main_page_url:
             self.navigate_manually(self.main_page_url, wait_element_locator=(By.ID, 'locationsGXP'))
-        if day_div_id is None:
+        if self.day_div_id is None:
             print("Please choose a date first.")
             return
-        self.choose_class(day_div_id)
+        self.choose_class()
 
 
 def main():
